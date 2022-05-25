@@ -1,5 +1,7 @@
 # Network Path Integrity Verification using Deterministic Delay Measurements
 
+
+
 ## Build description for custom real time kernel on RPI4 ##
 
 
@@ -126,4 +128,118 @@ udhcpc: lease of 192.168.240.160 obtained, lease time 604800
 ```
 
 
+## ICMP source configuration ## 
+
+### Real-time kernel ###
+
+#### Install dev tools
+```
+sudo apt update && sudo apt -y install build-essential
+```
+
+#### Move to working directory and get kernel and its patch
+```
+mkdir ~/kernel && cd ~/kernel
+wget https://mirrors.edge.kernel.org/pub/linux/kernel/v5.x/linux-5.6.19.tar.gz
+wget https://mirrors.edge.kernel.org/pub/linux/kernel/projects/rt/5.6/patch-5.6.19-rt11.patch.gz
+
+tar -xzvf linux-5.6.19.tar.gz
+```
+
+#### Patch the kernel
+```
+cd linux-5.6.19
+gzip -cd ../patch-5.6.19-rt11.patch.gz | patch -p1 --verbose
+```
+
+#### Enable realtime processing This step requires libncurses-dev
+```
+sudo apt -y  install libncurses-dev libssl-dev
+sudo apt -y install flex bison
+```
+
+#### Generate the config file
+```
+make menuconfig
+# Make preemptible kernel setup
+## General setup ---> [Enter]
+## Preemption Model (Voluntary Kernel Preemption (Desktop)) [Enter]
+## Fully Preemptible Kernel (RT) [Enter] #Select
+
+## Select <SAVE> and <EXIT>
+```
+
+#### Compile kernel
+```
+make -j20
+sudo make modules_install -j20
+sudo make install -j20
+```
+
+#### Make kernel images lighter
+```
+cd /lib/modules/5.6.19-rt11/  # Strip unneeded symbols of object files
+sudo find . -name *.ko -exec strip --strip-unneeded {} +
+
+$ sudo vi /etc/initramfs-tools/initramfs.conf # Change the compression format
+# Modify COMPRESS=lz4 to COMPRESS=xz (line 53)
+#COMPRESS=xz
+```
+
+#### Update initramfs and verify files
+```
+sudo update-initramfs -u
+
+# Make sure that initrd.img-5.4.5-rt3, vmlinuz-5.4.5-rt3, and config-5.4.5-rt3 are generated in /boot
+cd /boot
+ls
+```
+
+#### Update grub
+```
+sudo update-grub
+
+Linux delay-measurement 5.6.19-rt11 #1 SMP PREEMPT\_RT Thu Jul 30 14:24:20 UTC 2020 x86\_64 x86\_64 x86\_64 GNU/Linux
+
+Distributor ID:	Ubuntu
+Description:	Ubuntu 20.04.2 LTS
+Release:	20.04
+Codename:	focal
+```
+
+### Bash script to collect ping results
+The script below should be called with a parameter which provide information about the measurements i.e. lab/floors on campus, etc. We use a loop on the destination interface for backup compatibility with preliminary measurements while we were trying different interfaces on the server.
+
+```
+#!/usr/bin/bash
+
+COUNT=1000
+EXPERIMENT=10
+NOW=`date +"%Y%m%d"`
+
+DATA_FOLDER="${NOW}/$1"
+
+
+declare -A DST_INTERFACE=( ["enp1s0"]="192.168.X.Y" )
+
+declare -A SOURCE=( ["enp1s0"]="192.168.X.Z" )
+
+PAYLOADS=(56 1400 4000 6800 9600)
+
+
+for int in "${!DST_INTERFACE[@]}"
+ do
+   for e in $(seq 1 ${EXPERIMENT})
+    do
+      for p in ${PAYLOADS[@]}
+       do
+         mkdir -p ${DATA_FOLDER}/ping/results/${int}/${e}/${p}
+
+         echo "chrt 90 ping -s ${p}  -c ${COUNT} ${DST_INTERFACE[$int]}  > ${DATA_FOLDER}/ping/results/${int}/${e}/${p}/server-${int}-$1-${p}-rpi.txt
+
+
+       done
+    done
+ done
+```
 
